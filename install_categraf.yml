@@ -1,0 +1,84 @@
+---
+- name: Install and configure categraf
+  hosts: categraf_machine
+  become: yes
+
+  vars_prompt:
+    - name: "Nightgale_IP"
+      prompt: "请输入夜莺IP地址:"
+      private: no  # Set to yes if you want to hide user input
+
+  tasks:
+    - name: Check if categraf is already running
+      shell: ps -ef | grep "[c]ategraf"
+      register: categraf_process
+      ignore_errors: true
+
+    - name: Check if categraf is already installed
+      stat:
+        path: /iflytek/server/categraf-v0.3.51-linux-amd64
+      register: categraf_installed
+
+    - name: Prompt user and stop execution if categraf is already installed
+      block:
+        - name: Pause and prompt user if categraf is already installed
+          pause:
+            prompt: "categraf is already installed at /iflytek/server/categraf-v0.3.51-linux-amd64. Do you want to proceed with installation? (yes/no)"
+          register: pause_result
+          when: categraf_installed.stat.exists and categraf_installed.stat.isdir
+
+        - name: Fail if user chooses not to proceed
+          fail:
+            msg: "User chose not to proceed with installation. Aborting."
+          when: pause_result.user_input | lower != 'yes'
+      when: categraf_installed.stat.exists and categraf_installed.stat.isdir
+
+    - name: Create /iflytek/soft directory if not exists
+      file:
+        path: /iflytek/soft
+        state: directory
+
+    - name: Create /iflytek/server directory if not exists
+      file:
+        path: /iflytek/server
+        state: directory
+
+    - name: Copy categraf tar file
+      copy:
+        src: /iflytek/soft/categraf-v0.3.51-linux-amd64.tar.gz
+        dest: /iflytek/soft/categraf-v0.3.51-linux-amd64.tar.gz
+      when: categraf_process.rc != 0  # Install only if categraf process is not running
+
+    - name: Extract tar file
+      shell: tar -xzf /iflytek/soft/categraf-v0.3.51-linux-amd64.tar.gz -C /iflytek/server
+      args:
+        creates: /iflytek/server/categraf-v0.3.51-linux-amd64
+      when: categraf_process.rc != 0  # Extract only if categraf process is not running
+
+    - name: Configure Nightingale IP in config.toml (URL 1)
+      replace:
+        path: /iflytek/server/categraf-v0.3.51-linux-amd64/conf/config.toml
+        regexp: '^url = "http://127\.0\.0\.1:17000/prometheus/v1/write"$'
+        replace: 'url = "http://{{ Nightgale_IP }}:17000/prometheus/v1/write"'
+      when: categraf_process.rc != 0  # Configure only if categraf process is not running
+
+    - name: Configure Nightingale IP in config.toml (URL 2)
+      replace:
+        path: /iflytek/server/categraf-v0.3.51-linux-amd64/conf/config.toml
+        regexp: '^url = "http://127\.0\.0\.1:17000/v1/n9e/heartbeat"$'
+        replace: 'url = "http://{{ Nightgale_IP }}:17000/v1/n9e/heartbeat"'
+      when: categraf_process.rc != 0  # Configure only if categraf process is not running
+
+    - name: Start categraf
+      shell: "nohup /iflytek/server/categraf-v0.3.51-linux-amd64/categraf &> /iflytek/server/categraf-v0.3.51-linux-amd64/stdout.log &"
+      when: categraf_process.rc != 0  # Start only if categraf process is not running
+
+    - name: Wait for categraf to start
+      wait_for:
+        path: /iflytek/server/categraf-v0.3.51-linux-amd64/stdout.log
+        state: present
+        timeout: 60  # Adjust timeout as needed
+        delay: 5     # Adjust delay as needed
+      when: categraf_process.rc != 0  # Wait only if categraf process is not running
+
+    # Additional tasks go here...
